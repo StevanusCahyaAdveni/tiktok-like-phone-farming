@@ -161,8 +161,64 @@ class TikTokAutomationLabU2:
                 
                 self.logger.log(f"[{device_id}] Command Executed: Native Double-Tap Dispatched.")
 
-                # 4. Sub-rutin Rotasi IP (Airplane Mode) dan Ganti Akun
+                # 4. Sub-rutin Ganti Akun dan Rotasi IP
                 is_last_overall = (packages.index(package) == len(packages) - 1) and (i == execution_count)
+                
+                # --- A. Ganti Akun (Hanya jika belum loop terakhir dari suatu package) ---
+                if i < execution_count and self.is_running:
+                    self.logger.log(f"[{device_id}] Dispatching Account Switching Sub-routine...")
+                    
+                    # 1. Menuju Tab Profil (Pojok Kanan Bawah)
+                    if d(text="Profil").exists(timeout=3):
+                        d(text="Profil").click()
+                    else:
+                        self.logger.log(f"[{device_id}] 'Profil' text not found, using coordinate fallback...")
+                        d.click(0.9, 0.95)
+                    time.sleep(2.5)
+                    
+                    # 2. Buka Dropdown Akun (Dinamis Relatif terhadap teks "Mengikuti")
+                    self.logger.log(f"[{device_id}] Opening account dropdown...")
+                    try:
+                        if d(text="Mengikuti").exists(timeout=3):
+                            bounds = d(text="Mengikuti").info['bounds']
+                            mengikuti_x = (bounds['left'] + bounds['right']) / 2
+                            mengikuti_y = bounds['top']
+                            
+                            # Ambil tinggi layar untuk menghitung offset yang konsisten
+                            display_height = d.info['displayHeight']
+                            # Nama akun berada sekitar 6-8% layar di atas kata "Mengikuti"
+                            # (12% terlalu tinggi dan mengenai ikon pensil)
+                            target_y = mengikuti_y - (display_height * 0.07)
+                            
+                            d.click(mengikuti_x, target_y)
+                            self.logger.log(f"[{device_id}] Dropdown clicked dynamically at (X={mengikuti_x}, Y={target_y})")
+                        else:
+                            self.logger.log(f"[{device_id}] 'Mengikuti' not found, using left-top fallback...")
+                            d.click(0.2, 0.15)
+                    except Exception as e:
+                        self.logger.log(f"[{device_id}] Dynamic dropdown search failed: {e}")
+                        d.click(0.2, 0.15)
+                    time.sleep(2.5)
+                    
+                    # 3. Pilih Akun Target berdasarkan urutan (i)
+                    self.logger.log(f"[{device_id}] Selecting account #{i+1} from the list...")
+                    try:
+                        # Coba metode cerdas: Cari list dan klik item ke-i
+                        account_list = d(className="androidx.recyclerview.widget.RecyclerView")
+                        if account_list.exists and len(account_list.child(clickable=True)) > i:
+                            account_list.child(clickable=True)[i].click()
+                        else:
+                            # Metode Fallback Rasio Koordinat (Tengah ke Bawah)
+                            target_y = 0.55 + (0.08 * i)
+                            d.click(0.5, target_y)
+                    except Exception as e:
+                        self.logger.log(f"[{device_id}] UI search failed, falling back to coords: {e}")
+                        d.click(0.5, 0.55 + (0.08 * i))
+                        
+                    self.logger.log(f"[{device_id}] Account Switched. Waiting for stabilization...")
+                    time.sleep(4)
+
+                # --- B. Rotasi IP (Airplane Mode) ---
                 if not is_last_overall and self.is_running:
                     self.logger.log(f"[{device_id}] Dispatching IP Rotation (Airplane Mode)...")
                     
