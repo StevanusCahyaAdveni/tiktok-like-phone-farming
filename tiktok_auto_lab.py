@@ -176,24 +176,26 @@ class TikTokAutomationLabU2:
                         d.click(0.9, 0.95)
                     time.sleep(2.5)
                     
-                    # 2. Buka Dropdown Akun (Dinamis Relatif terhadap teks "Mengikuti")
+                    # 2. Buka Dropdown Akun (Dinamis Relatif terhadap teks "@")
                     self.logger.log(f"[{device_id}] Opening account dropdown...")
                     try:
-                        if d(text="Mengikuti").exists(timeout=3):
-                            bounds = d(text="Mengikuti").info['bounds']
-                            mengikuti_x = (bounds['left'] + bounds['right']) / 2
-                            mengikuti_y = bounds['top']
+                        # Mencari elemen handle akun (contoh: @lstnt6)
+                        handle = d(textStartsWith="@")
+                        if handle.exists(timeout=3):
+                            bounds = handle.info['bounds']
+                            handle_x = (bounds['left'] + bounds['right']) / 2
+                            handle_y = bounds['top']
                             
                             # Ambil tinggi layar untuk menghitung offset yang konsisten
                             display_height = d.info['displayHeight']
-                            # Nama akun berada sekitar 6-8% layar di atas kata "Mengikuti"
-                            # (12% terlalu tinggi dan mengenai ikon pensil)
-                            target_y = mengikuti_y - (display_height * 0.07)
+                            # Nama akun berada tepat di atas kata "@" (jaraknya sangat dekat)
+                            # Cukup naik sekitar 3-4% dari tinggi layar
+                            target_y = handle_y - (display_height * 0.04)
                             
-                            d.click(mengikuti_x, target_y)
-                            self.logger.log(f"[{device_id}] Dropdown clicked dynamically at (X={mengikuti_x}, Y={target_y})")
+                            d.click(handle_x, target_y)
+                            self.logger.log(f"[{device_id}] Dropdown clicked dynamically at (X={handle_x}, Y={target_y})")
                         else:
-                            self.logger.log(f"[{device_id}] 'Mengikuti' not found, using left-top fallback...")
+                            self.logger.log(f"[{device_id}] '@' handle not found, using left-top fallback...")
                             d.click(0.2, 0.15)
                     except Exception as e:
                         self.logger.log(f"[{device_id}] Dynamic dropdown search failed: {e}")
