@@ -55,13 +55,19 @@ class TikTokAutomationLabU2:
         frame_config = tk.LabelFrame(self.root, text=" 2. Loop & Package Configuration ", padx=10, pady=5)
         frame_config.pack(fill="x", padx=10, pady=5)
 
-        # Jumlah Akun
+        # Jumlah Akun & User IDs
         frame_loop = tk.Frame(frame_config)
         frame_loop.pack(side="left", fill="y", padx=5)
+        
         tk.Label(frame_loop, text="Accounts per App (N):").pack(anchor="w")
-        self.entry_loops = tk.Entry(frame_loop, width=15)
+        self.entry_loops = tk.Entry(frame_loop, width=18)
         self.entry_loops.pack(anchor="w", pady=2)
         self.entry_loops.insert(0, "3")
+
+        tk.Label(frame_loop, text="Android User IDs (ex: 0,10,11):").pack(anchor="w", pady=(5,0))
+        self.entry_users = tk.Entry(frame_loop, width=18)
+        self.entry_users.pack(anchor="w", pady=2)
+        self.entry_users.insert(0, "0")
 
         # Daftar Package
         frame_packages = tk.Frame(frame_config)
@@ -117,8 +123,8 @@ class TikTokAutomationLabU2:
         
         return devices
 
-    def device_worker_thread(self, device_id, target_url, packages, execution_count):
-        """Worker Thread berbasis uiautomator2."""
+    def device_worker_thread(self, device_id, target_url, packages, execution_count, target_users):
+        """Worker Thread berbasis uiautomator2 dengan dukungan Multi-User Android."""
         self.logger.log(f"[{device_id}] Connecting via UIAutomator2 driver...")
         
         try:
@@ -129,112 +135,130 @@ class TikTokAutomationLabU2:
             self.logger.log(f"[{device_id}] CRITICAL ERROR: Connection failed - {str(e)}")
             return
 
-        for package in packages:
+        total_users = len(target_users)
+        total_packages = len(packages)
+
+        for u_idx, user_id in enumerate(target_users):
             if not self.is_running: break
-            package = package.strip()
-            if not package: continue
+            user_id = str(user_id).strip()
+            if not user_id: continue
 
-            for i in range(1, execution_count + 1):
+            self.logger.log(f"[{device_id}] Switching to Android User Profile ID: {user_id} ({u_idx+1}/{total_users})...")
+            d.shell(f"am switch-user {user_id}")
+            self.logger.log(f"[{device_id}] Waiting 8s for User profile UI rendering...")
+            time.sleep(8)
+            
+            try:
+                d.unlock()
+            except Exception:
+                pass
+
+            for p_idx, package in enumerate(packages):
                 if not self.is_running: break
-                self.logger.log(f"[{device_id}] Target App: {package} | Account Loop {i} of {execution_count}")
+                package = package.strip()
+                if not package: continue
 
-                # 1. Force stop aplikasi via u2
-                self.logger.log(f"[{device_id}] Resetting application instance...")
-                d.app_stop(package)
-                time.sleep(1.5)
-                
-                # 2. Buka Deep Link langsung menggunakan shell u2
-                self.logger.log(f"[{device_id}] Dispatching Deep Link Activity...")
-                d.shell(f"am start -a android.intent.action.VIEW -d '{target_url}' {package}")
-                
-                # Jeda 10-12 detik untuk loading video
-                delay_time = random.randint(10, 12)
-                self.logger.log(f"[{device_id}] Waiting {delay_time}s for UI rendering...")
-                time.sleep(delay_time)
+                for i in range(1, execution_count + 1):
+                    if not self.is_running: break
+                    self.logger.log(f"[{device_id}] [User {user_id}] Target App: {package} | Account Loop {i} of {execution_count}")
 
-                # 3. Eksekusi Double Click di Tengah Layar (Native Gesture u2)
-                self.logger.log(f"[{device_id}] Dispatching Native Double-Tap to screen center (0.5, 0.5)...")
+                    # 1. Force stop aplikasi via u2
+                    self.logger.log(f"[{device_id}] Resetting application instance...")
+                    d.app_stop(package)
+                    time.sleep(1.5)
                 
-                # d.double_click mendukung koordinat rasio float (0.5 = 50% layar)
-                # duration=0.04 ms membuat ketukan sangat cepat & presisi untuk MIUI/HyperOS
-                d.double_click(0.5, 0.5, duration=0.04)
+                    # 2. Buka Deep Link langsung menggunakan shell u2
+                    self.logger.log(f"[{device_id}] Dispatching Deep Link Activity...")
+                    d.shell(f"am start -a android.intent.action.VIEW -d '{target_url}' {package}")
                 
-                self.logger.log(f"[{device_id}] Command Executed: Native Double-Tap Dispatched.")
+                    # Jeda 10-12 detik untuk loading video
+                    delay_time = random.randint(10, 12)
+                    self.logger.log(f"[{device_id}] Waiting {delay_time}s for UI rendering...")
+                    time.sleep(delay_time)
 
-                # 4. Sub-rutin Ganti Akun dan Rotasi IP
-                is_last_overall = (packages.index(package) == len(packages) - 1) and (i == execution_count)
+                    # 3. Eksekusi Double Click di Tengah Layar (Native Gesture u2)
+                    self.logger.log(f"[{device_id}] Dispatching Native Double-Tap to screen center (0.5, 0.5)...")
                 
-                # --- A. Ganti Akun (Hanya jika belum loop terakhir dari suatu package) ---
-                if i < execution_count and self.is_running:
-                    self.logger.log(f"[{device_id}] Dispatching Account Switching Sub-routine...")
+                    # d.double_click mendukung koordinat rasio float (0.5 = 50% layar)
+                    # duration=0.04 ms membuat ketukan sangat cepat & presisi untuk MIUI/HyperOS
+                    d.double_click(0.5, 0.5, duration=0.04)
+                
+                    self.logger.log(f"[{device_id}] Command Executed: Native Double-Tap Dispatched.")
+
+                    # 4. Sub-rutin Ganti Akun dan Rotasi IP
+                    is_last_overall = (u_idx == total_users - 1) and (p_idx == total_packages - 1) and (i == execution_count)
+                
+                    # --- A. Ganti Akun (Hanya jika belum loop terakhir dari suatu package) ---
+                    if i < execution_count and self.is_running:
+                        self.logger.log(f"[{device_id}] Dispatching Account Switching Sub-routine...")
                     
-                    # 1. Menuju Tab Profil (Pojok Kanan Bawah)
-                    if d(text="Profil").exists(timeout=3):
-                        d(text="Profil").click()
-                    else:
-                        self.logger.log(f"[{device_id}] 'Profil' text not found, using coordinate fallback...")
-                        d.click(0.9, 0.95)
-                    time.sleep(2.5)
-                    
-                    # 2. Buka Dropdown Akun (Dinamis Relatif terhadap teks "@")
-                    self.logger.log(f"[{device_id}] Opening account dropdown...")
-                    try:
-                        # Mencari elemen handle akun (contoh: @lstnt6)
-                        handle = d(textStartsWith="@")
-                        if handle.exists(timeout=3):
-                            bounds = handle.info['bounds']
-                            handle_x = (bounds['left'] + bounds['right']) / 2
-                            handle_y = bounds['top']
-                            
-                            # Ambil tinggi layar untuk menghitung offset yang konsisten
-                            display_height = d.info['displayHeight']
-                            # Nama akun berada tepat di atas kata "@" (jaraknya sangat dekat)
-                            # Cukup naik sekitar 3-4% dari tinggi layar
-                            target_y = handle_y - (display_height * 0.04)
-                            
-                            d.click(handle_x, target_y)
-                            self.logger.log(f"[{device_id}] Dropdown clicked dynamically at (X={handle_x}, Y={target_y})")
+                        # 1. Menuju Tab Profil (Pojok Kanan Bawah)
+                        if d(text="Profil").exists(timeout=3):
+                            d(text="Profil").click()
                         else:
-                            self.logger.log(f"[{device_id}] '@' handle not found, using left-top fallback...")
+                            self.logger.log(f"[{device_id}] 'Profil' text not found, using coordinate fallback...")
+                            d.click(0.9, 0.95)
+                        time.sleep(2.5)
+                    
+                        # 2. Buka Dropdown Akun (Dinamis Relatif terhadap teks "@")
+                        self.logger.log(f"[{device_id}] Opening account dropdown...")
+                        try:
+                            # Mencari elemen handle akun (contoh: @lstnt6)
+                            handle = d(textStartsWith="@")
+                            if handle.exists(timeout=3):
+                                bounds = handle.info['bounds']
+                                handle_x = (bounds['left'] + bounds['right']) / 2
+                                handle_y = bounds['top']
+                            
+                                # Ambil tinggi layar untuk menghitung offset yang konsisten
+                                display_height = d.info['displayHeight']
+                                # Nama akun berada tepat di atas kata "@" (jaraknya sangat dekat)
+                                # Cukup naik sekitar 3-4% dari tinggi layar
+                                target_y = handle_y - (display_height * 0.04)
+                            
+                                d.click(handle_x, target_y)
+                                self.logger.log(f"[{device_id}] Dropdown clicked dynamically at (X={handle_x}, Y={target_y})")
+                            else:
+                                self.logger.log(f"[{device_id}] '@' handle not found, using left-top fallback...")
+                                d.click(0.2, 0.15)
+                        except Exception as e:
+                            self.logger.log(f"[{device_id}] Dynamic dropdown search failed: {e}")
                             d.click(0.2, 0.15)
-                    except Exception as e:
-                        self.logger.log(f"[{device_id}] Dynamic dropdown search failed: {e}")
-                        d.click(0.2, 0.15)
-                    time.sleep(2.5)
+                        time.sleep(2.5)
                     
-                    # 3. Pilih Akun Target berdasarkan urutan (i)
-                    self.logger.log(f"[{device_id}] Selecting account #{i+1} from the list...")
-                    try:
-                        # Coba metode cerdas: Cari list dan klik item ke-i
-                        account_list = d(className="androidx.recyclerview.widget.RecyclerView")
-                        if account_list.exists and len(account_list.child(clickable=True)) > i:
-                            account_list.child(clickable=True)[i].click()
-                        else:
-                            # Metode Fallback Rasio Koordinat (Tengah ke Bawah)
-                            target_y = 0.55 + (0.08 * i)
-                            d.click(0.5, target_y)
-                    except Exception as e:
-                        self.logger.log(f"[{device_id}] UI search failed, falling back to coords: {e}")
-                        d.click(0.5, 0.55 + (0.08 * i))
+                        # 3. Pilih Akun Target berdasarkan urutan (i)
+                        self.logger.log(f"[{device_id}] Selecting account #{i+1} from the list...")
+                        try:
+                            # Coba metode cerdas: Cari list dan klik item ke-i
+                            account_list = d(className="androidx.recyclerview.widget.RecyclerView")
+                            if account_list.exists and len(account_list.child(clickable=True)) > i:
+                                account_list.child(clickable=True)[i].click()
+                            else:
+                                # Metode Fallback Rasio Koordinat (Tengah ke Bawah)
+                                target_y = 0.55 + (0.08 * i)
+                                d.click(0.5, target_y)
+                        except Exception as e:
+                            self.logger.log(f"[{device_id}] UI search failed, falling back to coords: {e}")
+                            d.click(0.5, 0.55 + (0.08 * i))
                         
-                    self.logger.log(f"[{device_id}] Account Switched. Waiting for stabilization...")
-                    time.sleep(4)
+                        self.logger.log(f"[{device_id}] Account Switched. Waiting for stabilization...")
+                        time.sleep(4)
 
-                # --- B. Rotasi IP (Airplane Mode) ---
-                if not is_last_overall and self.is_running:
-                    self.logger.log(f"[{device_id}] Dispatching IP Rotation (Airplane Mode)...")
+                    # --- B. Rotasi IP (Airplane Mode) ---
+                    if not is_last_overall and self.is_running:
+                        self.logger.log(f"[{device_id}] Dispatching IP Rotation (Airplane Mode)...")
                     
-                    # Hidupkan mode pesawat & Matikan data via u2 shell
-                    d.shell("cmd connectivity airplane-mode enable")
-                    d.shell("svc data disable")
-                    self.logger.log(f"[{device_id}] IP Reset (Airplane/Data OFF). Menunggu 5 detik...")
-                    time.sleep(5)
+                        # Hidupkan mode pesawat & Matikan data via u2 shell
+                        d.shell("cmd connectivity airplane-mode enable")
+                        d.shell("svc data disable")
+                        self.logger.log(f"[{device_id}] IP Reset (Airplane/Data OFF). Menunggu 5 detik...")
+                        time.sleep(5)
                     
-                    # Matikan mode pesawat & Hidupkan data via u2 shell
-                    d.shell("cmd connectivity airplane-mode disable")
-                    d.shell("svc data enable")
-                    self.logger.log(f"[{device_id}] IP Reset (Airplane/Data ON). Menunggu 3 detik untuk koneksi ulang...")
-                    time.sleep(3)
+                        # Matikan mode pesawat & Hidupkan data via u2 shell
+                        d.shell("cmd connectivity airplane-mode disable")
+                        d.shell("svc data enable")
+                        self.logger.log(f"[{device_id}] IP Reset (Airplane/Data ON). Menunggu 3 detik untuk koneksi ulang...")
+                        time.sleep(3)
 
         self.logger.log(f"[{device_id}] Worker Thread finished execution lifecycle.")
 
@@ -256,6 +280,11 @@ class TikTokAutomationLabU2:
             messagebox.showerror("Error", "Please input at least one Android Package Name!")
             return
 
+        user_ids_raw = self.entry_users.get().strip()
+        target_users = [u.strip() for u in user_ids_raw.split(",") if u.strip()]
+        if not target_users:
+            target_users = ["0"]
+
         self.is_running = True
         self.btn_start.config(state=tk.DISABLED)
         self.btn_refresh.config(state=tk.DISABLED)
@@ -267,7 +296,7 @@ class TikTokAutomationLabU2:
         for device_id in devices:
             t = threading.Thread(
                 target=self.device_worker_thread, 
-                args=(device_id, target_url, packages, execution_count)
+                args=(device_id, target_url, packages, execution_count, target_users)
             )
             t.daemon = True
             self.active_threads.append(t)
