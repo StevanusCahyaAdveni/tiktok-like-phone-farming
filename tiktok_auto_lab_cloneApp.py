@@ -4,6 +4,7 @@ import random
 import queue
 import threading
 import subprocess
+import requests
 import uiautomator2 as u2
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
@@ -33,9 +34,12 @@ class TikTokCloneAppLabU2:
     def __init__(self, root):
         self.root = root
         self.root.title("TikTok Multi-Device Lab v2.0 - Clone App Matrix Engine")
-        self.root.geometry("700x570")
+        self.root.geometry("700x750")
         self.is_running = False
         self.active_threads = []
+        
+        self.global_comment_count = 0
+        self.comment_lock = threading.Lock()
 
         self.setup_gui()
         self.logger = ThreadSafeConsoleLogger(self.log_text)
@@ -69,6 +73,26 @@ class TikTokCloneAppLabU2:
         self.entry_start_idx.pack(anchor="w", pady=2)
         self.entry_start_idx.insert(0, "1")
 
+        # Frame Auto Commenting
+        frame_ai = tk.LabelFrame(self.root, text=" 3. Auto Commenting Configuration ", padx=10, pady=5)
+        frame_ai.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(frame_ai, text="Target Comment Count:").grid(row=0, column=0, sticky="w", pady=2)
+        self.entry_comment_target = tk.Entry(frame_ai, width=20)
+        self.entry_comment_target.grid(row=0, column=1, sticky="w", pady=2, padx=5)
+        self.entry_comment_target.insert(0, "0") # Default 0 = Disable Commenting
+
+        tk.Label(frame_ai, text="List Komentar\n(1 Baris = 1 Komentar):").grid(row=1, column=0, sticky="nw", pady=2)
+        self.text_prompt = tk.Text(frame_ai, width=60, height=5)
+        self.text_prompt.grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        default_comments = (
+            "Visual packaging-nya ga ada obat! Slay banget asli 💅✨\n"
+            "Fix langsung meluncur ke keranjang kuning! Keracunan banget 😭🛒\n"
+            "Formula & hasilnya ga pernah gagal. Valid no debat ini mah! 💯🔥\n"
+            "Spill shade paling recommended-nya dong kak, mau auto checkout! 💸✨"
+        )
+        self.text_prompt.insert(tk.END, default_comments)
+
         # Information Box
         frame_info = tk.Frame(frame_config)
         frame_info.pack(side="right", fill="both", expand=True, padx=5)
@@ -97,7 +121,7 @@ class TikTokCloneAppLabU2:
         self.btn_refresh.pack(side="right", padx=5)
 
         # Console Log Window
-        frame_log = tk.LabelFrame(self.root, text=" 3. Execution Logs Console ", padx=10, pady=5)
+        frame_log = tk.LabelFrame(self.root, text=" 4. Execution Logs Console ", padx=10, pady=5)
         frame_log.pack(fill="both", expand=True, padx=10, pady=5)
         
         self.log_text = scrolledtext.ScrolledText(frame_log, bg="black", fg="#00ff00", font=("Consolas", 9))
@@ -129,7 +153,7 @@ class TikTokCloneAppLabU2:
         
         return devices
 
-    def device_worker_thread(self, device_id, target_url, total_clones, start_index):
+    def device_worker_thread(self, device_id, target_url, total_clones, start_index, comment_target):
         """Worker Thread berbasis uiautomator2 untuk Clone App Matrix."""
         self.logger.log(f"[{device_id}] Connecting via UIAutomator2 driver...")
         
@@ -248,33 +272,96 @@ class TikTokCloneAppLabU2:
                 self.logger.log(f"[{device_id}] Dispatching Native Double-Tap to screen center (0.5, 0.5)...")
                 d.double_click(0.5, 0.5, duration=0.04)
                 self.logger.log(f"[{device_id}] Command Executed: Native Double-Tap Dispatched.")
+                smart_sleep(1.5)
+
+                # --- FITUR AUTO COMMENTING ---
+                comment_text = None
+                with self.comment_lock:
+                    if self.global_comment_count < comment_target and self.shared_comments:
+                        comment_text = self.shared_comments.pop(0) # Ambil komentar pertama lalu hapus dari list
+                
+                if comment_text and self.is_running:
+                    self.logger.log(f"[{device_id}] Extracted Comment from List: '{comment_text}'")
+                    self.logger.log(f"[{device_id}] Opening Comment section...")
+                    # 1. Coba klik text box di bawah
+                    if d(textContains="Tambahkan komentar").exists(timeout=2):
+                        d(textContains="Tambahkan komentar").click()
+                    # 2. Coba klik ikon komentar di sebelah kanan via deskripsi
+                    elif d(descriptionMatches="(?i).*komentar.*|.*comment.*").exists(timeout=2):
+                        d(descriptionMatches="(?i).*komentar.*|.*comment.*").click()
+                    # 3. Fallback terakhir: klik koordinat ikon komentar di kanan layar (Sangat aman dari tombol navigasi)
+                    else:
+                        self.logger.log(f"[{device_id}] Button not found by text/desc, using coordinate fallback (0.91, 0.60)...")
+                        d.click(0.91, 0.60)
+                    smart_sleep(2.5)
+                    
+                    self.logger.log(f"[{device_id}] Typing comment...")
+                    edit_box = d(className="android.widget.EditText")
+                    if edit_box.exists(timeout=2):
+                        edit_box.click() # Pastikan fokus
+                        smart_sleep(1)
+                        edit_box.set_text(comment_text) # Isi teks
+                        smart_sleep(1.5)
+                        
+                        # Klik tombol kirim merah
+                        if d(descriptionMatches="(?i).*kirim.*|.*send.*").exists(timeout=2):
+                            d(descriptionMatches="(?i).*kirim.*|.*send.*").click()
+                        else:
+                            # Dynamic relative calculation based on EditText position
+                            bounds = edit_box.info['bounds']
+                            box_h = bounds['bottom'] - bounds['top']
+                            # Red button is aligned to the right edge and below the EditText
+                            send_x = bounds['right'] - int(box_h / 2)
+                            send_y = bounds['bottom'] + int(box_h / 2)
+                            
+                            self.logger.log(f"[{device_id}] Send button text not found, using relative fallback (X={send_x}, Y={send_y})...")
+                            d.click(send_x, send_y)
+                            
+                        self.logger.log(f"[{device_id}] Comment SENT successfully!")
+                        with self.comment_lock:
+                            self.global_comment_count += 1
+                            self.logger.log(f"--- GLOBAL COMMENT PROGRESS: {self.global_comment_count}/{comment_target} ---")
+                        smart_sleep(2)
+                    else:
+                        self.logger.log(f"[{device_id}] Failed to find Edit Box.")
+                        
+                    # Tutup menu komentar (tekan back)
+                    d.press("back")
+                    smart_sleep(1.5)
+                elif self.global_comment_count >= comment_target and comment_target > 0:
+                    self.logger.log(f"[{device_id}] Target comments reached. Skipping comment...")
+                elif not comment_text and comment_target > 0:
+                    self.logger.log(f"[{device_id}] Comment list is empty! Skipping comment...")
+                # ---------------------------
 
                 # 5. Tutup Paksa Aplikasi untuk Melegakan RAM (Clear Memory)
-                self.logger.log(f"[{device_id}] Clearing RAM: Force-stopping all Clone App processes...")
+                self.logger.log(f"[{device_id}] Clearing RAM: Force-stopping Clone App and TikTok processes...")
                 d.app_stop("com.pengyou.cloneapp")
-                smart_sleep(2)
+                d.app_stop("com.zhiliaoapp.musically.go") # TikTok Lite fallback kill
+                smart_sleep(2.5)
 
                 is_last = (clone_num == total_clones)
                 if not is_last and self.is_running:
                     # Buka kembali aplikasi Clone App
                     self.logger.log(f"[{device_id}] Reopening Clone App Matrix for the next account...")
                     d.app_start("com.pengyou.cloneapp")
-                    smart_sleep(5) # Tunggu grid muncul sempurna
+                    smart_sleep(4.5) # Tunggu grid muncul sempurna
 
                     # 6. Sub-rutin Rotasi IP (Airplane Mode)
-                    self.logger.log(f"[{device_id}] Dispatching IP Rotation (Airplane Mode)...")
-                    
-                    # Hidupkan mode pesawat & Matikan data via u2 shell
-                    d.shell("cmd connectivity airplane-mode enable")
-                    d.shell("svc data disable")
-                    self.logger.log(f"[{device_id}] IP Reset (Airplane/Data OFF). Menunggu 5 detik...")
-                    smart_sleep(5)
-                    
-                    # Matikan mode pesawat & Hidupkan data via u2 shell
-                    d.shell("cmd connectivity airplane-mode disable")
-                    d.shell("svc data enable")
-                    self.logger.log(f"[{device_id}] IP Reset (Airplane/Data ON). Menunggu 3 detik untuk koneksi ulang...")
-                    smart_sleep(3)
+                    if clone_num % 10 == 0:
+                        self.logger.log(f"[{device_id}] Dispatching IP Rotation (Airplane Mode) every 10 clones...")
+                        
+                        # Hidupkan mode pesawat & Matikan data via u2 shell
+                        d.shell("cmd connectivity airplane-mode enable")
+                        d.shell("svc data disable")
+                        self.logger.log(f"[{device_id}] IP Reset (Airplane/Data OFF). Menunggu 5 detik...")
+                        smart_sleep(5)
+                        
+                        # Matikan mode pesawat & Hidupkan data via u2 shell
+                        d.shell("cmd connectivity airplane-mode disable")
+                        d.shell("svc data enable")
+                        self.logger.log(f"[{device_id}] IP Reset (Airplane/Data ON). Menunggu 3 detik untuk koneksi ulang...")
+                        smart_sleep(3)
 
             self.logger.log(f"[{device_id}] Worker Thread finished execution lifecycle.")
         except StopAutomationException:
@@ -290,9 +377,15 @@ class TikTokCloneAppLabU2:
         try:
             total_clones = int(self.entry_clones.get().strip())
             start_index = int(self.entry_start_idx.get().strip())
+            comment_target = int(self.entry_comment_target.get().strip())
         except ValueError:
-            messagebox.showerror("Error", "Total Clones & Start Index must be clean integers!")
+            messagebox.showerror("Error", "Clones, Start Index & Comment Target must be clean integers!")
             return
+
+        raw_comments = self.text_prompt.get("1.0", tk.END).strip().split("\n")
+        self.shared_comments = [c.strip() for c in raw_comments if c.strip()]
+
+        self.global_comment_count = 0 # Reset hitungan global
 
         self.is_running = True
         self.btn_start.config(state=tk.DISABLED)
@@ -305,7 +398,7 @@ class TikTokCloneAppLabU2:
         for device_id in devices:
             t = threading.Thread(
                 target=self.device_worker_thread, 
-                args=(device_id, target_url, total_clones, start_index)
+                args=(device_id, target_url, total_clones, start_index, comment_target)
             )
             t.daemon = True
             self.active_threads.append(t)
