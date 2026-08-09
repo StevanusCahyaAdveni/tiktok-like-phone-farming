@@ -4,7 +4,6 @@ import random
 import queue
 import threading
 import subprocess
-import requests
 import uiautomator2 as u2
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
@@ -46,14 +45,21 @@ class TikTokCloneAppLabU2:
         self.detect_devices_startup()
 
     def setup_gui(self):
-        # Frame Input URL
+        # Frame Input Target Profil
         frame_url = tk.LabelFrame(self.root, text=" 1. Target Configuration ", padx=10, pady=5)
         frame_url.pack(fill="x", padx=10, pady=5)
         
-        tk.Label(frame_url, text="Urutan Grup di Inbox (Baris ke berapa, misal: 3):").pack(anchor="w")
-        self.entry_url = tk.Entry(frame_url, width=80)
-        self.entry_url.pack(fill="x", pady=2)
-        self.entry_url.insert(0, "3")
+        # Username Input
+        tk.Label(frame_url, text="Username Akun Target (misal: vionex):").grid(row=0, column=0, sticky="w", pady=2)
+        self.entry_url = tk.Entry(frame_url, width=40)
+        self.entry_url.grid(row=0, column=1, sticky="w", pady=2, padx=5)
+        self.entry_url.insert(0, "vionex")
+        
+        # Video Index Input
+        tk.Label(frame_url, text="Urutan Video di Tab Liked (misal: 1):").grid(row=1, column=0, sticky="w", pady=2)
+        self.entry_video_index = tk.Entry(frame_url, width=10)
+        self.entry_video_index.grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        self.entry_video_index.insert(0, "1")
 
         # Frame Loop & Clone App Configurations
         frame_config = tk.LabelFrame(self.root, text=" 2. Clone App Matrix Configuration ", padx=10, pady=5)
@@ -132,8 +138,10 @@ class TikTokCloneAppLabU2:
         try:
             result = subprocess.run(["adb", "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             output = result.stdout
-        except Exception:
-            output = ""
+        except Exception as e:
+            self.logger.log(f"CRITICAL ERROR: ADB is not installed or not in PATH! ({str(e)})")
+            messagebox.showerror("ADB Error", "ADB (Android Debug Bridge) tidak terdeteksi!\n\nPastikan Anda telah menginstal Android SDK Platform Tools dan menambahkannya ke PATH Windows laptop client ini.")
+            return []
 
         devices = []
         lines = output.splitlines()
@@ -153,7 +161,7 @@ class TikTokCloneAppLabU2:
         
         return devices
 
-    def device_worker_thread(self, device_id, target_url, total_clones, start_index, comment_target):
+    def device_worker_thread(self, device_id, target_account, video_index, total_clones, start_index, comment_target):
         """Worker Thread berbasis uiautomator2 untuk Clone App Matrix."""
         self.logger.log(f"[{device_id}] Connecting via UIAutomator2 driver...")
         
@@ -194,8 +202,8 @@ class TikTokCloneAppLabU2:
                 click_y = row_y_ratios[row_in_page]
                 self.logger.log(f"[{device_id}] [Clone #{clone_num}/{total_clones}] Launching Clone App...")
                 d.app_start("com.pengyou.cloneapp")
-                # Jeda 4.5 detik untuk memastikan SplashActivity / Iklan Clone App selesai memuat
-                smart_sleep(4.5)
+                # Jeda 7.5 detik (tambahan 3 detik) untuk memastikan SplashActivity / Iklan Clone App selesai memuat
+                smart_sleep(7.5)
                 
                 # Scroll halaman jika clone berada di halaman bawah
                 if target_page > 0:
@@ -225,45 +233,97 @@ class TikTokCloneAppLabU2:
                     d.click(click_x, click_y)
                     smart_sleep(5)
                 
-                # 3. Navigasi ke Video Target via Inbox (Group Chat Method)
-                try:
-                    chat_index = int(target_url)
-                except:
-                    chat_index = 3 # Default baris ke-3
-                    
-                self.logger.log(f"[{device_id}] Opening Inbox (Kotak Masuk)...")
-                
-                # Buka tab Kotak Masuk
-                if d(textContains="Kotak Masuk").exists(timeout=2) or d(textMatches="(?i)kotak masuk|inbox").exists(timeout=0):
+                # 3. Navigasi Pencarian Akun Target
+                self.logger.log(f"[{device_id}] Opening 'Jelajahi' (Discover) tab...")
+                if d(textContains="Jelajahi").exists(timeout=2) or d(descriptionMatches="(?i)jelajahi|discover").exists(timeout=0):
                     try:
-                        d(textContains="Kotak Masuk").click()
+                        d(textContains="Jelajahi").click()
                     except Exception:
-                        d(textMatches="(?i)kotak masuk|inbox").click()
-                    smart_sleep(3)
+                        d(descriptionMatches="(?i)jelajahi|discover").click()
                 else:
-                    self.logger.log(f"[{device_id}] 'Kotak Masuk' text not found, using coordinate fallback...")
-                    d.click(0.7, 0.95) # Koordinat menu Kotak Masuk di TikTok Lite (bawah kanan-tengah)
-                    smart_sleep(3)
-                    
-                # Klik Grup berdasarkan urutan baris
-                # Jarak antar chat di TikTok Lite adalah sekitar 0.083 dari tinggi layar.
-                # Baris ke-1 (Aktivitas) ada di Y=0.133
-                click_y = 0.133 + (chat_index - 1) * 0.083
+                    self.logger.log(f"[{device_id}] 'Jelajahi' not found, using coordinate fallback...")
+                    d.click(0.3, 0.95) # Koordinat menu Jelajahi (bawah, kiri-tengah)
+                smart_sleep(3)
                 
-                self.logger.log(f"[{device_id}] Clicking Chat Row #{chat_index} (Coordinate Y={click_y:.3f})...")
-                smart_sleep(1.5) # Jeda penstabilan sebelum klik grup
-                d.click(0.5, click_y)
+                # Klik kotak pencarian di bagian atas
+                self.logger.log(f"[{device_id}] Clicking Search Bar...")
+                if d(textContains="Temukan").exists(timeout=2):
+                    d(textContains="Temukan").click()
+                else:
+                    d.click(0.5, 0.08) # Koordinat Search Bar (Tengah Atas)
+                smart_sleep(2)
                 
-                self.logger.log(f"[{device_id}] Waiting 5s for chat room to fully render...")
-                smart_sleep(5) # Jeda lebih lama menunggu ruang chat terbuka sempurna
+                # Ketik username dan cari
+                self.logger.log(f"[{device_id}] Searching for Account: {target_account}...")
+                edit_search = d(className="android.widget.EditText")
+                if edit_search.exists(timeout=2):
+                    edit_search.set_text(target_account)
+                    smart_sleep(1)
+                    d.press("enter")
+                    smart_sleep(2)
+                    # Coba klik tombol 'Cari' di sebelah kanan jika enter tidak memicu pencarian
+                    if d(text="Cari").exists(timeout=1):
+                        d(text="Cari").click()
+                else:
+                    self.logger.log(f"[{device_id}] ERROR: Search box not found!")
+                    # Tetap lanjut
+                smart_sleep(4) # Tunggu hasil pencarian muncul
                 
-                # Klik Pesan Terakhir (Video Link)
-                self.logger.log(f"[{device_id}] Clicking the latest video message in chat...")
-                smart_sleep(1.5) # Jeda penstabilan sebelum klik video
+                # Klik hasil pencarian teratas (Biasanya blok User Profil)
+                self.logger.log(f"[{device_id}] Clicking top search result for {target_account}...")
+                profile_clicked = False
+                try:
+                    # Cari semua elemen yang mengandung nama target
+                    match_count = d(textContains=target_account).count
+                    for i in range(match_count):
+                        el = d(textContains=target_account)[i]
+                        bounds = el.info['bounds']
+                        # Jika elemen ada di bagian atas layar (Y < 200px), itu pasti kotak pencarian. Abaikan!
+                        if bounds['top'] > 200:
+                            el.click()
+                            profile_clicked = True
+                            break
+                except Exception as e:
+                    self.logger.log(f"[{device_id}] Selection error: {str(e)}")
+
+                if not profile_clicked:
+                    self.logger.log(f"[{device_id}] Text match failed or hidden, using coordinate fallback...")
+                    # Fallback koordinat hasil pencarian pengguna teratas
+                    # Y=0.28 lebih aman karena posisinya pas di bawah teks "PENGGUNA" dan pas di avatar profil
+                    d.click(0.4, 0.28)
+                smart_sleep(4) # Tunggu profil dimuat
                 
-                # Lakukan SATU kali klik presisi
-                d.click(0.5, 0.78)
-                smart_sleep(1.5) # Jeda sesudah klik
+                # Klik tab Liked (Disukai) dengan Ikon Hati
+                self.logger.log(f"[{device_id}] Switching to 'Liked' (Heart) Tab...")
+                if d(descriptionContains="Disukai").exists(timeout=2) or d(descriptionContains="Suka").exists(timeout=0):
+                    try:
+                        d(descriptionContains="Disukai").click()
+                    except Exception:
+                        d(descriptionContains="Suka").click()
+                else:
+                    # Koordinat fallback untuk tab Hati (Grid/Repost/Hati) -> Posisinya di kanan
+                    d.click(0.83, 0.55) # Tab ke-3 di layout profil
+                smart_sleep(3)
+                
+                # Buka Video ke-N dari Grid Liked
+                self.logger.log(f"[{device_id}] Opening Liked Video #{video_index}...")
+                # Perhitungan Grid: 3 kolom
+                vid_idx_0_based = video_index - 1
+                vid_row = vid_idx_0_based // 3
+                vid_col = vid_idx_0_based % 3
+                
+                # Y Offset: Mulai dari garis bawah tab hati (sekitar 0.60), setiap baris sekitar 0.25
+                # X Offset: Kolom 1 (0.16), Kolom 2 (0.5), Kolom 3 (0.83)
+                vid_col_x = [0.16, 0.50, 0.83]
+                vid_row_y_start = 0.68
+                vid_row_height = 0.25
+                
+                click_vid_x = vid_col_x[vid_col]
+                click_vid_y = vid_row_y_start + (vid_row * vid_row_height)
+                
+                self.logger.log(f"[{device_id}] Target Video Coordinate: X={click_vid_x:.2f}, Y={click_vid_y:.2f}")
+                d.click(click_vid_x, click_vid_y)
+                
                 delay_time = random.randint(7, 9)
                 self.logger.log(f"[{device_id}] Waiting {delay_time}s for video rendering...")
                 smart_sleep(delay_time)
@@ -282,52 +342,60 @@ class TikTokCloneAppLabU2:
                 
                 if comment_text and self.is_running:
                     self.logger.log(f"[{device_id}] Extracted Comment from List: '{comment_text}'")
-                    self.logger.log(f"[{device_id}] Opening Comment section...")
-                    # 1. Coba klik text box di bawah
-                    if d(textContains="Tambahkan komentar").exists(timeout=2):
-                        d(textContains="Tambahkan komentar").click()
-                    # 2. Coba klik ikon komentar di sebelah kanan via deskripsi
-                    elif d(descriptionMatches="(?i).*komentar.*|.*comment.*").exists(timeout=2):
-                        d(descriptionMatches="(?i).*komentar.*|.*comment.*").click()
-                    # 3. Fallback terakhir: klik koordinat ikon komentar di kanan layar (Sangat aman dari tombol navigasi)
-                    else:
-                        self.logger.log(f"[{device_id}] Button not found by text/desc, using coordinate fallback (0.91, 0.60)...")
-                        d.click(0.91, 0.60)
-                    smart_sleep(2.5)
                     
-                    self.logger.log(f"[{device_id}] Typing comment...")
-                    edit_box = d(className="android.widget.EditText")
-                    if edit_box.exists(timeout=2):
-                        edit_box.click() # Pastikan fokus
-                        smart_sleep(1)
-                        edit_box.set_text(comment_text) # Isi teks
-                        smart_sleep(1.5)
-                        
-                        # Klik tombol kirim merah
-                        if d(descriptionMatches="(?i).*kirim.*|.*send.*").exists(timeout=2):
-                            d(descriptionMatches="(?i).*kirim.*|.*send.*").click()
-                        else:
-                            # Dynamic relative calculation based on EditText position
-                            bounds = edit_box.info['bounds']
-                            box_h = bounds['bottom'] - bounds['top']
-                            # Red button is aligned to the right edge and below the EditText
-                            send_x = bounds['right'] - int(box_h / 2)
-                            send_y = bounds['bottom'] + int(box_h / 2)
-                            
-                            self.logger.log(f"[{device_id}] Send button text not found, using relative fallback (X={send_x}, Y={send_y})...")
-                            d.click(send_x, send_y)
-                            
-                        self.logger.log(f"[{device_id}] Comment SENT successfully!")
+                    # Cek apakah fitur komentar dinonaktifkan oleh kreator
+                    if d(textContains="menonaktifkan").exists(timeout=2) or d(descriptionContains="menonaktifkan").exists(timeout=0):
+                        self.logger.log(f"[{device_id}] Creator disabled comments! Skipping and saving comment for next video...")
                         with self.comment_lock:
-                            self.global_comment_count += 1
-                            self.logger.log(f"--- GLOBAL COMMENT PROGRESS: {self.global_comment_count}/{comment_target} ---")
-                        smart_sleep(2)
+                            # Kembalikan komentar ke antrean paling depan agar tidak terbuang sia-sia
+                            self.shared_comments.insert(0, comment_text)
                     else:
-                        self.logger.log(f"[{device_id}] Failed to find Edit Box.")
+                        self.logger.log(f"[{device_id}] Opening Comment section...")
+                        # 1. Coba klik text box di bawah
+                        if d(textContains="Tambahkan komentar").exists(timeout=2):
+                            d(textContains="Tambahkan komentar").click()
+                        # 2. Coba klik ikon komentar di sebelah kanan via deskripsi
+                        elif d(descriptionMatches="(?i).*komentar.*|.*comment.*").exists(timeout=2):
+                            d(descriptionMatches="(?i).*komentar.*|.*comment.*").click()
+                        # 3. Fallback terakhir: klik koordinat ikon komentar di kanan layar (Sangat aman dari tombol navigasi)
+                        else:
+                            self.logger.log(f"[{device_id}] Button not found by text/desc, using coordinate fallback (0.91, 0.60)...")
+                            d.click(0.91, 0.60)
+                        smart_sleep(2.5)
                         
-                    # Tutup menu komentar (tekan back)
-                    d.press("back")
-                    smart_sleep(1.5)
+                        self.logger.log(f"[{device_id}] Typing comment...")
+                        edit_box = d(className="android.widget.EditText")
+                        if edit_box.exists(timeout=2):
+                            edit_box.click() # Pastikan fokus
+                            smart_sleep(1)
+                            edit_box.set_text(comment_text) # Isi teks
+                            smart_sleep(1.5)
+                            
+                            # Klik tombol kirim merah
+                            if d(descriptionMatches="(?i).*kirim.*|.*send.*").exists(timeout=2):
+                                d(descriptionMatches="(?i).*kirim.*|.*send.*").click()
+                            else:
+                                # Dynamic relative calculation based on EditText position
+                                bounds = edit_box.info['bounds']
+                                box_h = bounds['bottom'] - bounds['top']
+                                # Red button is aligned to the right edge and below the EditText
+                                send_x = bounds['right'] - int(box_h / 2)
+                                send_y = bounds['bottom'] + int(box_h / 2)
+                                
+                                self.logger.log(f"[{device_id}] Send button text not found, using relative fallback (X={send_x}, Y={send_y})...")
+                                d.click(send_x, send_y)
+                                
+                            self.logger.log(f"[{device_id}] Comment SENT successfully!")
+                            with self.comment_lock:
+                                self.global_comment_count += 1
+                                self.logger.log(f"--- GLOBAL COMMENT PROGRESS: {self.global_comment_count}/{comment_target} ---")
+                            smart_sleep(2)
+                        else:
+                            self.logger.log(f"[{device_id}] Failed to find Edit Box.")
+                            
+                        # Tutup menu komentar (tekan back)
+                        d.press("back")
+                        smart_sleep(1.5)
                 elif self.global_comment_count >= comment_target and comment_target > 0:
                     self.logger.log(f"[{device_id}] Target comments reached. Skipping comment...")
                 elif not comment_text and comment_target > 0:
@@ -373,13 +441,14 @@ class TikTokCloneAppLabU2:
             messagebox.showerror("Error", "No connected Android devices detected via ADB!")
             return
 
-        target_url = self.entry_url.get().strip()
+        target_account = self.entry_url.get().strip()
         try:
+            video_index = int(self.entry_video_index.get().strip())
             total_clones = int(self.entry_clones.get().strip())
             start_index = int(self.entry_start_idx.get().strip())
             comment_target = int(self.entry_comment_target.get().strip())
         except ValueError:
-            messagebox.showerror("Error", "Clones, Start Index & Comment Target must be clean integers!")
+            messagebox.showerror("Error", "Video Index, Clones, Start Index & Comment Target must be clean integers!")
             return
 
         raw_comments = self.text_prompt.get("1.0", tk.END).strip().split("\n")
@@ -398,7 +467,7 @@ class TikTokCloneAppLabU2:
         for device_id in devices:
             t = threading.Thread(
                 target=self.device_worker_thread, 
-                args=(device_id, target_url, total_clones, start_index, comment_target)
+                args=(device_id, target_account, video_index, total_clones, start_index, comment_target)
             )
             t.daemon = True
             self.active_threads.append(t)
