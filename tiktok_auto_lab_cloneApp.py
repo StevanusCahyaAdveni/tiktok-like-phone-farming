@@ -4,9 +4,31 @@ import random
 import queue
 import threading
 import subprocess
+import shutil
 import uiautomator2 as u2
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
+
+
+def find_adb_executable():
+    adb_name = "adb.exe" if os.name == "nt" else "adb"
+    adb_path = shutil.which(adb_name)
+    if adb_path:
+        return adb_path
+
+    candidates = [
+        os.path.join(os.path.expanduser("~"), "Downloads", "adb.exe"),
+        os.path.join(os.path.expanduser("~"), "Downloads", "platform-tools", "adb.exe"),
+        os.path.join("C:\\Program Files\\Android\\Android SDK\\platform-tools", "adb.exe"),
+        os.path.join("C:\\Program Files (x86)\\Android\\android-sdk\\platform-tools", "adb.exe"),
+        os.path.join("C:\\Program Files\\ASUS\\GlideX", "adb.exe"),
+    ]
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    return None
 
 class ThreadSafeConsoleLogger:
     """Mengelola pengiriman log dari berbagai thread ke GUI secara aman (Thread-Safe)."""
@@ -39,6 +61,10 @@ class TikTokCloneAppLabU2:
         
         self.global_comment_count = 0
         self.comment_lock = threading.Lock()
+        
+        self.global_clone_count = 0
+        self.device_clone_counts = {}
+        self.stats_lock = threading.Lock()
 
         self.setup_gui()
         self.logger = ThreadSafeConsoleLogger(self.log_text)
@@ -126,8 +152,18 @@ class TikTokCloneAppLabU2:
         self.btn_refresh = tk.Button(frame_controls, text="Scan Devices", command=self.detect_devices_startup)
         self.btn_refresh.pack(side="right", padx=5)
 
+        # Statistics Window
+        frame_stats = tk.LabelFrame(self.root, text=" 4. Live Statistics ", padx=10, pady=5)
+        frame_stats.pack(fill="x", padx=10, pady=5)
+        
+        self.lbl_global_clones = tk.Label(frame_stats, text="Total Clones Executed: 0", font=("Arial", 10, "bold"), fg="blue")
+        self.lbl_global_clones.pack(anchor="w")
+        
+        self.lbl_device_stats = tk.Label(frame_stats, text="Device Stats: None", font=("Arial", 9), fg="black")
+        self.lbl_device_stats.pack(anchor="w")
+
         # Console Log Window
-        frame_log = tk.LabelFrame(self.root, text=" 4. Execution Logs Console ", padx=10, pady=5)
+        frame_log = tk.LabelFrame(self.root, text=" 5. Execution Logs Console ", padx=10, pady=5)
         frame_log.pack(fill="both", expand=True, padx=10, pady=5)
         
         self.log_text = scrolledtext.ScrolledText(frame_log, bg="black", fg="#00ff00", font=("Consolas", 9))
@@ -135,12 +171,28 @@ class TikTokCloneAppLabU2:
 
     def detect_devices_startup(self):
         """Mendeteksi semua HP yang terhubung via ADB."""
+        adb_path = find_adb_executable()
+        if adb_path is None:
+            self.logger.log("CRITICAL ERROR: ADB is not installed or not in PATH!")
+            messagebox.showerror(
+                "ADB Error",
+                "ADB (Android Debug Bridge) tidak terdeteksi!\n\n" \
+                "Pastikan Anda telah menginstal Android SDK Platform Tools dan menambahkannya ke PATH Windows laptop client ini.\n\n" \
+                "Jika sudah memiliki adb.exe di Downloads atau SDK, pindahkan ke PATH atau ke folder yang dikenali."
+            )
+            return []
+
+        self.logger.log(f"Using ADB executable: {adb_path}")
         try:
-            result = subprocess.run(["adb", "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run([adb_path, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             output = result.stdout
         except Exception as e:
-            self.logger.log(f"CRITICAL ERROR: ADB is not installed or not in PATH! ({str(e)})")
-            messagebox.showerror("ADB Error", "ADB (Android Debug Bridge) tidak terdeteksi!\n\nPastikan Anda telah menginstal Android SDK Platform Tools dan menambahkannya ke PATH Windows laptop client ini.")
+            self.logger.log(f"CRITICAL ERROR: ADB execution failed - {str(e)}")
+            messagebox.showerror(
+                "ADB Error",
+                "ADB ditemukan tetapi gagal dijalankan. Periksa instalasi Android SDK Platform Tools dan izin file.\n\n" \
+                f"Detail: {str(e)}"
+            )
             return []
 
         devices = []
@@ -228,8 +280,23 @@ class TikTokCloneAppLabU2:
                     
                 if not tiktok_opened:
                     self.logger.log(f"[{device_id}] WARNING: Clone #{clone_num} didn't launch on first click, retrying...")
-                    d.click(click_x, click_y)
+                    # Coba klik berdasarkan teks jika meleset (misal grid di HP ini ukurannya beda)
+                    clone_icon = d(textMatches=f"(?i).*TikTok.*{clone_num}.*|.*{clone_num}.*TikTok.*")
+                    if clone_icon.exists(timeout=1):
+                        self.logger.log(f"[{device_id}] Found icon by text, clicking...")
+                        clone_icon.click()
+                    else:
+                        d.click(click_x, click_y)
                     smart_sleep(5)
+                    
+                    # Cek ulang apakah TikTok berhasil terbuka setelah retry
+                    if d(textMatches="(?i)beranda|jelajahi|profil|home|discover|profile").exists(timeout=3) or d(descriptionMatches="(?i)beranda|jelajahi|profil|home|discover|profile").exists(timeout=0):
+                        tiktok_opened = True
+
+                # CRITICAL FIX: Jika TikTok GAGAL TERBUKA, jangan lanjutkan ke logika pencarian!
+                if not tiktok_opened:
+                    self.logger.log(f"[{device_id}] ERROR: Failed to launch Clone #{clone_num}! Skipping this clone to prevent rogue clicks.")
+                    continue # Langsung lanjut ke aplikasi Clone berikutnya!
                 
                 self.logger.log(f"[{device_id}] Clearing potential overlays (Bottom Sheets/Popups)...")
                 d.swipe(0.5, 0.6, 0.5, 0.9) # Swipe ke bawah untuk menutup "Share/Report" jika tak sengaja tertekan
@@ -306,17 +373,55 @@ class TikTokCloneAppLabU2:
                 
                 # Klik tab Liked (Disukai) dengan Ikon Hati
                 self.logger.log(f"[{device_id}] Switching to 'Liked' (Heart) Tab...")
-                heart_tab = d(descriptionMatches="(?i).*disukai.*|.*suka.*|.*liked.*|.*likes.*")
+                heart_tabs = d(descriptionMatches="(?i).*disukai.*|.*suka.*|.*liked.*|.*likes.*")
                 
                 screen_width, screen_height = d.window_size()
-                tab_center_y = int(screen_height * 0.55) # Default fallback
                 
-                if heart_tab.exists(timeout=2):
-                    bounds = heart_tab.info['bounds']
-                    tab_center_y = bounds['top'] + ((bounds['bottom'] - bounds['top']) // 2)
-                    heart_tab.click()
+                aspect_ratio = screen_height / screen_width
+                if aspect_ratio < 1.9:
+                    fallback_y = 0.58 # HP Layar Pendek, tab lebih di bawah
+                elif aspect_ratio < 2.1:
+                    fallback_y = 0.52 
                 else:
-                    d.click(0.83, 0.55) # Koordinat fallback untuk tab Hati
+                    fallback_y = 0.48 # HP Layar Panjang, tab lebih di atas
+                    
+                # STRATEGI 4 (PALING AMPUH): "Swipe & Pin"
+                # Kita scroll profil ke bawah secara paksa agar Bio yang panjang dan Statistik "Suka" 
+                # menghilang dari layar. Ini akan membuat Tab Bar "mentok" (pinned) di bagian atas layar.
+                self.logger.log(f"[{device_id}] Normalizing UI: Scrolling down to hide Bio and pin Tab Bar to top...")
+                
+                # Lakukan dua kali swipe kuat ke atas
+                d.swipe(0.5, 0.70, 0.5, 0.15, duration=0.4)
+                smart_sleep(1.5)
+                d.swipe(0.5, 0.70, 0.5, 0.15, duration=0.4)
+                smart_sleep(2)
+                
+                # Setelah di-swipe, Tab Bar PASTI menempel di atas (sekitar Y=0.11) 
+                # Tidak peduli sepanjang apa pun bionya, karena bionya sudah tersingkir!
+                tab_center_y = int(screen_height * 0.11)
+                
+                # Coba cari Heart Tab berdasarkan deskripsi, KARENA stat "396 rb Suka" sudah hilang dari layar,
+                # jadi kalau ketemu kata "suka", itu PASTI tab hati.
+                heart_tab = d(descriptionMatches="(?i).*disukai.*|.*suka.*|.*liked.*|.*likes.*")
+                clicked_tab = False
+                
+                if heart_tab.exists(timeout=1):
+                    for i in range(len(heart_tab)):
+                        bounds = heart_tab[i].info['bounds']
+                        # Pastikan posisinya ada di area atas (karena tab bar sudah di-pin)
+                        if bounds['top'] < screen_height * 0.25:
+                            tab_center_y = bounds['top'] + ((bounds['bottom'] - bounds['top']) // 2)
+                            heart_tab[i].click()
+                            clicked_tab = True
+                            self.logger.log(f"[{device_id}] Heart tab clicked via text at pinned position Y: {tab_center_y}")
+                            break
+                            
+                # Jika tab hati tidak punya deskripsi teks, kita gunakan klik koordinat aman di Y=0.11
+                # X=0.75 adalah titik aman untuk menyentuh Ikon Hati terlepas dari jumlah tab (2, 3, atau 4 tab)
+                if not clicked_tab:
+                    self.logger.log(f"[{device_id}] Heart tab text not found. Clicking pinned coordinate X=0.75, Y=0.11")
+                    d.click(0.75, 0.11)
+                    
                 smart_sleep(3)
                 
                 # Buka Video ke-N dari Grid Liked
@@ -450,6 +555,12 @@ class TikTokCloneAppLabU2:
                 d.app_stop("com.zhiliaoapp.musically")    # TikTok Global fallback kill
                 smart_sleep(2.5)
 
+                # UPDATE STATISTIK
+                with self.stats_lock:
+                    self.global_clone_count += 1
+                    self.device_clone_counts[device_id] = self.device_clone_counts.get(device_id, 0) + 1
+                self.update_stats_ui()
+
                 is_last = (clone_num == total_clones)
                 if not is_last and self.is_running:
                     # Buka kembali aplikasi Clone App
@@ -477,6 +588,18 @@ class TikTokCloneAppLabU2:
         except StopAutomationException:
             self.logger.log(f"[{device_id}] 🛑 EMERGENCY STOP: Worker thread forcefully halted!")
 
+    def update_stats_ui(self):
+        """Thread-safe update of the statistics labels."""
+        with self.stats_lock:
+            global_c = self.global_clone_count
+            dev_stats = " | ".join([f"[{dev}]: {cnt} clones" for dev, cnt in self.device_clone_counts.items()])
+            
+        def _update():
+            self.lbl_global_clones.config(text=f"Total Clones Executed: {global_c}")
+            self.lbl_device_stats.config(text=f"Device Stats: {dev_stats if dev_stats else 'None'}")
+            
+        self.root.after(0, _update)
+
     def start_automation(self):
         devices = self.detect_devices_startup()
         if not devices:
@@ -497,6 +620,11 @@ class TikTokCloneAppLabU2:
         self.shared_comments = [c.strip() for c in raw_comments if c.strip()]
 
         self.global_comment_count = 0 # Reset hitungan global
+        
+        # Reset stats
+        self.global_clone_count = 0
+        self.device_clone_counts = {dev: 0 for dev in devices}
+        self.update_stats_ui()
 
         self.is_running = True
         self.btn_start.config(state=tk.DISABLED)
