@@ -279,26 +279,29 @@ class TikTokCloneAppLabU2:
                 
                 # Klik hasil pencarian teratas (Biasanya blok User Profil)
                 self.logger.log(f"[{device_id}] Clicking top search result for {target_account}...")
+                
+                screen_width, screen_height = d.window_size()
                 profile_clicked = False
+                
                 try:
-                    # Cari semua elemen yang mengandung nama target
-                    match_count = d(textContains=target_account).count
-                    for i in range(match_count):
-                        el = d(textContains=target_account)[i]
-                        bounds = el.info['bounds']
-                        # Jika elemen ada di bagian atas layar (Y < 200px), itu pasti kotak pencarian. Abaikan!
-                        if bounds['top'] > 200:
-                            el.click()
-                            profile_clicked = True
-                            break
+                    # Sesuai saran: Cari label 'Pengguna' (atau Users) lalu klik persis di bawahnya.
+                    # Ini jauh lebih aman daripada mencari textContains yang bisa menembak judul video.
+                    user_label = d(textMatches="(?i)pengguna|users|accounts")
+                    if user_label.exists(timeout=3):
+                        # Ambil elemen pertama (yang paling atas jika ada beberapa)
+                        bounds = user_label[0].info['bounds']
+                        click_y = bounds['bottom'] + int(screen_height * 0.08) # Klik sekitar 8% layar di bawah label "Pengguna"
+                        self.logger.log(f"[{device_id}] Found 'Pengguna/Users' label. Clicking below it at Y: {click_y}")
+                        d.click(int(screen_width * 0.5), click_y)
+                        profile_clicked = True
                 except Exception as e:
-                    self.logger.log(f"[{device_id}] Selection error: {str(e)}")
-
+                    self.logger.log(f"[{device_id}] Selection error by label: {str(e)}")
+                    
                 if not profile_clicked:
-                    self.logger.log(f"[{device_id}] Text match failed or hidden, using coordinate fallback...")
+                    self.logger.log(f"[{device_id}] 'Pengguna' label not found, using coordinate fallback...")
                     # Fallback koordinat hasil pencarian pengguna teratas
-                    # Y=0.28 lebih aman karena posisinya pas di bawah teks "PENGGUNA" dan pas di avatar profil
-                    d.click(0.4, 0.28)
+                    # Y=0.25 lebih aman karena posisinya pas di bawah teks "PENGGUNA" dan pas di avatar profil
+                    d.click(0.4, 0.25)
                 smart_sleep(4) # Tunggu profil dimuat
                 
                 # Klik tab Liked (Disukai) dengan Ikon Hati
