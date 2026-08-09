@@ -212,10 +212,8 @@ class TikTokCloneAppLabU2:
                         d.swipe_ext("up", scale=0.52)
                         smart_sleep(1.2)
                 
-                # 1. Klik ikon aplikasi TikTok Clone (Klik presisi & re-click jika perlu)
+                # 1. Klik ikon aplikasi TikTok Clone (Satu kali klik untuk menghindari long-press)
                 self.logger.log(f"[{device_id}] Clicking Clone Icon #{clone_num} at Grid (Row {row+1}, Col {col+1})...")
-                d.click(click_x, click_y)
-                smart_sleep(0.3)
                 d.click(click_x, click_y)
                 
                 # 2. Verifikasi bahwa aplikasi TikTok Clone benar-benar terbuka
@@ -223,7 +221,7 @@ class TikTokCloneAppLabU2:
                 tiktok_opened = False
                 for _ in range(7):
                     # Deteksi elemen UI TikTok karena package Name bisa tetap Clone App
-                    if d(textMatches="(?i)beranda|jelajahi|profil").exists(timeout=0) or d(descriptionMatches="(?i)beranda|jelajahi|profil").exists(timeout=0):
+                    if d(textMatches="(?i)beranda|jelajahi|profil|home|discover|profile").exists(timeout=0) or d(descriptionMatches="(?i)beranda|jelajahi|profil|home|discover|profile").exists(timeout=0):
                         tiktok_opened = True
                         break
                     smart_sleep(1)
@@ -233,39 +231,49 @@ class TikTokCloneAppLabU2:
                     d.click(click_x, click_y)
                     smart_sleep(5)
                 
-                # 3. Navigasi Pencarian Akun Target
-                self.logger.log(f"[{device_id}] Opening 'Jelajahi' (Discover) tab...")
-                if d(textContains="Jelajahi").exists(timeout=2) or d(descriptionMatches="(?i)jelajahi|discover").exists(timeout=0):
-                    try:
-                        d(textContains="Jelajahi").click()
-                    except Exception:
-                        d(descriptionMatches="(?i)jelajahi|discover").click()
-                else:
-                    self.logger.log(f"[{device_id}] 'Jelajahi' not found, using coordinate fallback...")
-                    d.click(0.3, 0.95) # Koordinat menu Jelajahi (bawah, kiri-tengah)
-                smart_sleep(3)
+                self.logger.log(f"[{device_id}] Clearing potential overlays (Bottom Sheets/Popups)...")
+                d.swipe(0.5, 0.6, 0.5, 0.9) # Swipe ke bawah untuk menutup "Share/Report" jika tak sengaja tertekan
+                smart_sleep(1)
+                d.swipe(0.5, 0.15, 0.5, 0.02) # Swipe atas untuk menutup banner notifikasi di puncak layar
+                smart_sleep(1)
                 
-                # Klik kotak pencarian di bagian atas
-                self.logger.log(f"[{device_id}] Clicking Search Bar...")
-                if d(textContains="Temukan").exists(timeout=2):
-                    d(textContains="Temukan").click()
+                # 3. Navigasi Pencarian Akun Target
+                self.logger.log(f"[{device_id}] Mencari navigasi pencarian (Jelajahi atau Ikon Search)...")
+                
+                # Coba cari berdasarkan teks atau deskripsi untuk tombol pencarian/jelajahi
+                if d(textMatches="(?i)jelajahi|discover").exists(timeout=2):
+                    d(textMatches="(?i)jelajahi|discover").click()
+                    smart_sleep(2)
+                    self.logger.log(f"[{device_id}] (Lite) Clearing top banners then clicking Search Bar...")
+                    d.swipe(0.5, 0.2, 0.5, 0.02) # Usir paksa notifikasi "Pesan Baru" yang menutupi Search Bar
+                    smart_sleep(1)
+                    if d(textMatches="(?i)temukan|search").exists(timeout=2):
+                        d(textMatches="(?i)temukan|search").click()
+                    else:
+                        d.click(0.5, 0.08) # Koordinat Search Bar (Tengah Atas)
+                elif d(descriptionMatches="(?i).*search.*|.*cari.*|.*jelajahi.*|.*discover.*").exists(timeout=0):
+                    d(descriptionMatches="(?i).*search.*|.*cari.*|.*jelajahi.*|.*discover.*").click()
                 else:
-                    d.click(0.5, 0.08) # Koordinat Search Bar (Tengah Atas)
-                smart_sleep(2)
+                    self.logger.log(f"[{device_id}] Ikon search tidak ditemukan, mencoba klik koordinat kanan atas (Global)...")
+                    d.click(0.9, 0.08) # Koordinat fallback ikon Kaca Pembesar di TikTok Global
+                smart_sleep(3)
                 
                 # Ketik username dan cari
                 self.logger.log(f"[{device_id}] Searching for Account: {target_account}...")
                 edit_search = d(className="android.widget.EditText")
-                if edit_search.exists(timeout=2):
+                if edit_search.exists(timeout=3):
+                    # Terkadang klik search icon otomatis fokus ke EditText, namun kita klik untuk pasti
+                    edit_search.click()
+                    smart_sleep(1)
                     edit_search.set_text(target_account)
                     smart_sleep(1)
                     d.press("enter")
                     smart_sleep(2)
-                    # Coba klik tombol 'Cari' di sebelah kanan jika enter tidak memicu pencarian
-                    if d(text="Cari").exists(timeout=1):
-                        d(text="Cari").click()
+                    # Coba klik tombol 'Cari' atau 'Search' di sebelah kanan jika enter tidak memicu pencarian
+                    if d(textMatches="(?i)cari|search").exists(timeout=1):
+                        d(textMatches="(?i)cari|search").click()
                 else:
-                    self.logger.log(f"[{device_id}] ERROR: Search box not found!")
+                    self.logger.log(f"[{device_id}] ERROR: Search box/EditText not found!")
                     # Tetap lanjut
                 smart_sleep(4) # Tunggu hasil pencarian muncul
                 
@@ -295,32 +303,62 @@ class TikTokCloneAppLabU2:
                 
                 # Klik tab Liked (Disukai) dengan Ikon Hati
                 self.logger.log(f"[{device_id}] Switching to 'Liked' (Heart) Tab...")
-                if d(descriptionContains="Disukai").exists(timeout=2) or d(descriptionContains="Suka").exists(timeout=0):
-                    try:
-                        d(descriptionContains="Disukai").click()
-                    except Exception:
-                        d(descriptionContains="Suka").click()
+                heart_tab = d(descriptionMatches="(?i).*disukai.*|.*suka.*|.*liked.*|.*likes.*")
+                
+                screen_width, screen_height = d.window_size()
+                tab_center_y = int(screen_height * 0.55) # Default fallback
+                
+                if heart_tab.exists(timeout=2):
+                    bounds = heart_tab.info['bounds']
+                    tab_center_y = bounds['top'] + ((bounds['bottom'] - bounds['top']) // 2)
+                    heart_tab.click()
                 else:
-                    # Koordinat fallback untuk tab Hati (Grid/Repost/Hati) -> Posisinya di kanan
-                    d.click(0.83, 0.55) # Tab ke-3 di layout profil
+                    d.click(0.83, 0.55) # Koordinat fallback untuk tab Hati
                 smart_sleep(3)
                 
                 # Buka Video ke-N dari Grid Liked
                 self.logger.log(f"[{device_id}] Opening Liked Video #{video_index}...")
-                # Perhitungan Grid: 3 kolom
+                
+                # --- PENCARIAN KOORDINAT TOTAL DINAMIS (TANPA ASUMSI SCROLL) ---
                 vid_idx_0_based = video_index - 1
                 vid_row = vid_idx_0_based // 3
                 vid_col = vid_idx_0_based % 3
                 
-                # Y Offset: Mulai dari garis bawah tab hati (sekitar 0.60), setiap baris sekitar 0.25
-                # X Offset: Kolom 1 (0.16), Kolom 2 (0.5), Kolom 3 (0.83)
                 vid_col_x = [0.16, 0.50, 0.83]
-                vid_row_y_start = 0.68
-                vid_row_height = 0.25
-                
                 click_vid_x = vid_col_x[vid_col]
-                click_vid_y = vid_row_y_start + (vid_row * vid_row_height)
                 
+                # Tinggi 1 video adalah 16/27 dari lebar layar (Aspek rasio 9:16, dibagi 3 kolom)
+                # Rumus: (screen_width / 3) * (16 / 9) / screen_height = persentase tinggi video
+                vid_height_pct = ((screen_width / 3.0) * (16.0 / 9.0)) / screen_height
+                
+                # Hitung posisi absolut Y dari target
+                current_tab_y_pct = tab_center_y / screen_height
+                target_y = current_tab_y_pct + (vid_row * vid_height_pct) + (vid_height_pct / 2)
+                
+                # Jika video target jatuh di luar layar bawah (> 90%), kita HARUS scroll
+                while target_y > 0.88:
+                    self.logger.log(f"[{device_id}] Target Y ({target_y:.2f}) is off-screen. Scrolling down...")
+                    # Scroll layar perlahan sebesar setengah layar
+                    d.swipe(0.5, 0.80, 0.5, 0.30, duration=1.0)
+                    smart_sleep(2)
+                    
+                    # CARI ULANG posisi Tab Hati setelah scroll!
+                    if heart_tab.exists(timeout=2):
+                        bounds = heart_tab.info['bounds']
+                        tab_center_y = bounds['top'] + ((bounds['bottom'] - bounds['top']) // 2)
+                        current_tab_y_pct = tab_center_y / screen_height
+                    else:
+                        # Jika tak terlihat, biasanya karena Tab sudah "Pinned" di paling atas layar (sekitar 0.12 - 0.15)
+                        current_tab_y_pct = 0.15 
+                        
+                    # Kalkulasi Ulang Target Y
+                    target_y = current_tab_y_pct + (vid_row * vid_height_pct) + (vid_height_pct / 2)
+                    self.logger.log(f"[{device_id}] New Target Y calculated: {target_y:.2f}")
+
+                click_vid_y = target_y
+                if click_vid_y > 0.95:
+                    click_vid_y = 0.90
+                    
                 self.logger.log(f"[{device_id}] Target Video Coordinate: X={click_vid_x:.2f}, Y={click_vid_y:.2f}")
                 d.click(click_vid_x, click_vid_y)
                 
@@ -375,12 +413,12 @@ class TikTokCloneAppLabU2:
                             if d(descriptionMatches="(?i).*kirim.*|.*send.*").exists(timeout=2):
                                 d(descriptionMatches="(?i).*kirim.*|.*send.*").click()
                             else:
-                                # Dynamic relative calculation based on EditText position
+                                # Dynamic relative calculation
                                 bounds = edit_box.info['bounds']
-                                box_h = bounds['bottom'] - bounds['top']
-                                # Red button is aligned to the right edge and below the EditText
-                                send_x = bounds['right'] - int(box_h / 2)
-                                send_y = bounds['bottom'] + int(box_h / 2)
+                                screen_width, _ = d.window_size()
+                                # Tombol panah biasanya berada di pojok kanan, sedikit di bawah kotak teks
+                                send_x = int(screen_width * 0.90) 
+                                send_y = bounds['bottom'] + int((bounds['bottom'] - bounds['top']) * 0.7)
                                 
                                 self.logger.log(f"[{device_id}] Send button text not found, using relative fallback (X={send_x}, Y={send_y})...")
                                 d.click(send_x, send_y)
@@ -406,6 +444,7 @@ class TikTokCloneAppLabU2:
                 self.logger.log(f"[{device_id}] Clearing RAM: Force-stopping Clone App and TikTok processes...")
                 d.app_stop("com.pengyou.cloneapp")
                 d.app_stop("com.zhiliaoapp.musically.go") # TikTok Lite fallback kill
+                d.app_stop("com.zhiliaoapp.musically")    # TikTok Global fallback kill
                 smart_sleep(2.5)
 
                 is_last = (clone_num == total_clones)
