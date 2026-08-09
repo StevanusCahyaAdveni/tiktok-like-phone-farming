@@ -241,32 +241,39 @@ class TikTokCloneAppLabU2:
             for clone_num in range(start_index, total_clones + 1):
                 if not self.is_running: raise StopAutomationException()
                 
-                # Grid Slot #0 diloncati karena berisi Folder Tools.
-                # Clone #1 menempati Grid Slot #1 (Baris 0, Kolom 1)
-                grid_slot = clone_num
-                row = grid_slot // 4
-                col = grid_slot % 4
-                
-                target_page = row // 4
-                row_in_page = row % 4
-                
-                click_x = col_x_ratios[col]
-                click_y = row_y_ratios[row_in_page]
                 self.logger.log(f"[{device_id}] [Clone #{clone_num}/{total_clones}] Launching Clone App...")
                 d.app_start("com.pengyou.cloneapp")
                 # Jeda 7.5 detik (tambahan 3 detik) untuk memastikan SplashActivity / Iklan Clone App selesai memuat
                 smart_sleep(7.5)
                 
-                # Scroll halaman jika clone berada di halaman bawah
-                if target_page > 0:
-                    self.logger.log(f"[{device_id}] Scrolling grid down {target_page} page(s) to reach Clone #{clone_num}...")
-                    for p in range(target_page):
-                        d.swipe_ext("up", scale=0.52)
-                        smart_sleep(1.2)
+                # 1. Cari ikon aplikasi berdasarkan nama persis (angka clone_num)
+                self.logger.log(f"[{device_id}] Searching for Clone Icon named '{clone_num}'...")
                 
-                # 1. Klik ikon aplikasi TikTok Clone (Satu kali klik untuk menghindari long-press)
-                self.logger.log(f"[{device_id}] Clicking Clone Icon #{clone_num} at Grid (Row {row+1}, Col {col+1})...")
-                d.click(click_x, click_y)
+                icon_found = False
+                clone_icon = None
+                for scroll_attempt in range(10): # Maksimal 10 kali scroll
+                    if not self.is_running: raise StopAutomationException()
+                    
+                    # Cari teks yang SAMA PERSIS dengan nomor clone (misal "9") atau yang mengandung kata TikTok
+                    clone_icon = d(text=str(clone_num))
+                    if not clone_icon.exists(timeout=0):
+                        # Coba alternatif jika user masih memakai nama panjang
+                        clone_icon = d(textMatches=f"(?i).*TikTok.*{clone_num}.*|.*{clone_num}.*TikTok.*")
+                        
+                    if clone_icon.exists(timeout=1):
+                        self.logger.log(f"[{device_id}] Found Clone Icon '{clone_num}' on screen. Clicking...")
+                        clone_icon.click()
+                        icon_found = True
+                        break
+                    
+                    self.logger.log(f"[{device_id}] Icon '{clone_num}' not found. Scrolling down (Attempt {scroll_attempt+1})...")
+                    # Lakukan scroll pendek ke bawah layar (geser jari ke atas)
+                    d.swipe(0.5, 0.75, 0.5, 0.35, duration=0.8)
+                    smart_sleep(1.5)
+                    
+                if not icon_found:
+                    self.logger.log(f"[{device_id}] ERROR: Could not find Clone Icon '{clone_num}' after scrolling. Skipping!")
+                    continue
                 
                 # 2. Verifikasi bahwa aplikasi TikTok Clone benar-benar terbuka
                 self.logger.log(f"[{device_id}] Verifying Cloned TikTok launch...")
@@ -279,14 +286,11 @@ class TikTokCloneAppLabU2:
                     smart_sleep(1)
                     
                 if not tiktok_opened:
-                    self.logger.log(f"[{device_id}] WARNING: Clone #{clone_num} didn't launch on first click, retrying...")
-                    # Coba klik berdasarkan teks jika meleset (misal grid di HP ini ukurannya beda)
-                    clone_icon = d(textMatches=f"(?i).*TikTok.*{clone_num}.*|.*{clone_num}.*TikTok.*")
-                    if clone_icon.exists(timeout=1):
-                        self.logger.log(f"[{device_id}] Found icon by text, clicking...")
+                    self.logger.log(f"[{device_id}] WARNING: Clone #{clone_num} didn't launch on first click, retrying click...")
+                    if clone_icon and clone_icon.exists(timeout=1):
                         clone_icon.click()
                     else:
-                        d.click(click_x, click_y)
+                        self.logger.log(f"[{device_id}] Icon lost from screen, cannot retry.")
                     smart_sleep(5)
                     
                     # Cek ulang apakah TikTok berhasil terbuka setelah retry
