@@ -237,11 +237,20 @@ class TikTokCloneAppLabU2:
         col_x_ratios = [0.125, 0.375, 0.625, 0.875]
         row_y_ratios = [0.165, 0.295, 0.425, 0.555]
 
+        # Penanganan fleksibel: Jika total_clones < start_index (misal user input Start=9, Total/Count=3),
+        # otomatis dihitung sebagai end_index = start_index + total_clones - 1 (yaitu 9..11).
+        # Jika total_clones >= start_index (misal user input Start=9, End=50), maka end_index = total_clones.
+        if total_clones < start_index:
+            end_index = start_index + total_clones - 1
+            self.logger.log(f"[{device_id}] Detected Total Clones as count ({total_clones}). Range set: #{start_index} -> #{end_index}")
+        else:
+            end_index = total_clones
+
         try:
-            for clone_num in range(start_index, total_clones + 1):
+            for clone_num in range(start_index, end_index + 1):
                 if not self.is_running: raise StopAutomationException()
                 
-                self.logger.log(f"[{device_id}] [Clone #{clone_num}/{total_clones}] Launching Clone App...")
+                self.logger.log(f"[{device_id}] [Clone #{clone_num}/{end_index}] Launching Clone App...")
                 d.app_start("com.pengyou.cloneapp")
                 # Jeda 7.5 detik (tambahan 3 detik) untuk memastikan SplashActivity / Iklan Clone App selesai memuat
                 smart_sleep(7.5)
@@ -254,10 +263,16 @@ class TikTokCloneAppLabU2:
                 for scroll_attempt in range(10): # Maksimal 10 kali scroll
                     if not self.is_running: raise StopAutomationException()
                     
-                    # Cari teks yang SAMA PERSIS dengan nomor clone (misal "9") atau yang mengandung kata TikTok
+                    # 1. Cari teks yang SAMA PERSIS dengan nomor clone (misal "9")
                     clone_icon = d(text=str(clone_num))
                     if not clone_icon.exists(timeout=0):
-                        # Coba alternatif jika user masih memakai nama panjang
+                        # 2. Cari alternatif dengan format nama TikTok (misal "TikTok 9", "TikTok (9)", "9 TikTok")
+                        clone_icon = d(textMatches=f"(?i)^\\s*(TikTok\\s*[-_()]*\\s*{clone_num}|{clone_num}\\s*[-_()]*\\s*TikTok|{clone_num})\\s*$")
+                    if not clone_icon.exists(timeout=0):
+                        # 3. Cari berdasarkan deskripsi accessibility
+                        clone_icon = d(description=str(clone_num))
+                    if not clone_icon.exists(timeout=0):
+                        # 4. Fallback text contains
                         clone_icon = d(textMatches=f"(?i).*TikTok.*{clone_num}.*|.*{clone_num}.*TikTok.*")
                         
                     if clone_icon.exists(timeout=1):
@@ -501,39 +516,59 @@ class TikTokCloneAppLabU2:
                             self.shared_comments.insert(0, comment_text)
                     else:
                         self.logger.log(f"[{device_id}] Opening Comment section...")
-                        # 1. Coba klik text box di bawah
-                        if d(textContains="Tambahkan komentar").exists(timeout=2):
-                            d(textContains="Tambahkan komentar").click()
-                        # 2. Coba klik ikon komentar di sebelah kanan via deskripsi
-                        elif d(descriptionMatches="(?i).*komentar.*|.*comment.*").exists(timeout=2):
+                        # 1. Buka bottom sheet komentar
+                        if d(descriptionMatches="(?i).*komentar.*|.*comment.*").exists(timeout=2):
                             d(descriptionMatches="(?i).*komentar.*|.*comment.*").click()
-                        # 3. Fallback terakhir: klik koordinat ikon komentar di kanan layar (Sangat aman dari tombol navigasi)
+                        elif d(textContains="Tambahkan komentar").exists(timeout=1):
+                            d(textContains="Tambahkan komentar").click()
                         else:
                             self.logger.log(f"[{device_id}] Button not found by text/desc, using coordinate fallback (0.91, 0.60)...")
                             d.click(0.91, 0.60)
                         smart_sleep(2.5)
+
+                        # 2. Klik kotak input di bagian bawah lembar komentar agar keyboard & EditText aktif
+                        self.logger.log(f"[{device_id}] Focusing Comment Input Box...")
+                        input_prompt = d(textMatches="(?i).*tambahkan komentar.*|.*add comment.*|.*say something.*")
+                        if input_prompt.exists(timeout=2):
+                            input_prompt.click()
+                        else:
+                            # Klik area bawah lembar komentar jika teks prompt tidak terbaca
+                            d.click(0.40, 0.95)
+                        smart_sleep(1.5)
                         
                         self.logger.log(f"[{device_id}] Typing comment...")
                         edit_box = d(className="android.widget.EditText")
+                        if not edit_box.exists(timeout=2):
+                            edit_box = d(focused=True)
+                            
                         if edit_box.exists(timeout=2):
                             edit_box.click() # Pastikan fokus
-                            smart_sleep(1)
+                            smart_sleep(0.8)
                             edit_box.set_text(comment_text) # Isi teks
                             smart_sleep(1.5)
                             
-                            # Klik tombol kirim merah
+                            # 3. Klik tombol Kirim (Ikon Panah Merah / Teks Kirim / Send)
+                            sent = False
                             if d(descriptionMatches="(?i).*kirim.*|.*send.*").exists(timeout=2):
                                 d(descriptionMatches="(?i).*kirim.*|.*send.*").click()
+                                sent = True
+                            elif d(textMatches="(?i).*kirim.*|.*send.*").exists(timeout=1):
+                                d(textMatches="(?i).*kirim.*|.*send.*").click()
+                                sent = True
                             else:
                                 # Dynamic relative calculation
-                                bounds = edit_box.info['bounds']
-                                screen_width, _ = d.window_size()
-                                # Tombol panah biasanya berada di pojok kanan, sedikit di bawah kotak teks
-                                send_x = int(screen_width * 0.90) 
-                                send_y = bounds['bottom'] + int((bounds['bottom'] - bounds['top']) * 0.7)
-                                
-                                self.logger.log(f"[{device_id}] Send button text not found, using relative fallback (X={send_x}, Y={send_y})...")
-                                d.click(send_x, send_y)
+                                try:
+                                    bounds = edit_box.info['bounds']
+                                    screen_width, _ = d.window_size()
+                                    send_x = int(screen_width * 0.90) 
+                                    send_y = bounds['bottom'] + int((bounds['bottom'] - bounds['top']) * 0.7)
+                                    self.logger.log(f"[{device_id}] Send button text not found, using relative fallback (X={send_x}, Y={send_y})...")
+                                    d.click(send_x, send_y)
+                                    sent = True
+                                except Exception:
+                                    # Fallback kirim via enter keyevent
+                                    d.press("enter")
+                                    sent = True
                                 
                             self.logger.log(f"[{device_id}] Comment SENT successfully!")
                             with self.comment_lock:
@@ -541,13 +576,15 @@ class TikTokCloneAppLabU2:
                                 self.logger.log(f"--- GLOBAL COMMENT PROGRESS: {self.global_comment_count}/{comment_target} ---")
                             smart_sleep(2)
                         else:
-                            self.logger.log(f"[{device_id}] Failed to find Edit Box.")
+                            self.logger.log(f"[{device_id}] Failed to find Edit Box. Returning comment back to queue...")
+                            with self.comment_lock:
+                                self.shared_comments.insert(0, comment_text)
                             
                         # Tutup menu komentar (tekan back)
                         d.press("back")
                         smart_sleep(1.5)
                 elif self.global_comment_count >= comment_target and comment_target > 0:
-                    self.logger.log(f"[{device_id}] Target comments reached. Skipping comment...")
+                    self.logger.log(f"[{device_id}] Target comments reached ({self.global_comment_count}/{comment_target}). Skipping comment...")
                 elif not comment_text and comment_target > 0:
                     self.logger.log(f"[{device_id}] Comment list is empty! Skipping comment...")
                 # ---------------------------
@@ -565,7 +602,7 @@ class TikTokCloneAppLabU2:
                     self.device_clone_counts[device_id] = self.device_clone_counts.get(device_id, 0) + 1
                 self.update_stats_ui()
 
-                is_last = (clone_num == total_clones)
+                is_last = (clone_num == end_index)
                 if not is_last and self.is_running:
                     # Buka kembali aplikasi Clone App
                     self.logger.log(f"[{device_id}] Reopening Clone App Matrix for the next account...")
@@ -622,6 +659,12 @@ class TikTokCloneAppLabU2:
 
         raw_comments = self.text_prompt.get("1.0", tk.END).strip().split("\n")
         self.shared_comments = [c.strip() for c in raw_comments if c.strip()]
+
+        # Auto-detect comment target: Jika Target diisi 0 tapi user mengisi List Komentar,
+        # otomatis set target sesuai jumlah komentar yang tersedia di text box.
+        if comment_target == 0 and len(self.shared_comments) > 0:
+            comment_target = len(self.shared_comments)
+            self.logger.log(f"AUTO-CONFIG: Target Comment Count otomatis diset ke {comment_target} (sesuai jumlah baris komentar).")
 
         self.global_comment_count = 0 # Reset hitungan global
         
