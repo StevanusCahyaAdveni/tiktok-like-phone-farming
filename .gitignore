@@ -3,3 +3,5 @@ __pycache__/
 *$py.class
 .vscode/
 .idea/
+openrouter_key.txt
+*openrouter_key*.txt
